@@ -24,7 +24,11 @@ class DbBridge:
     def load_db(self):
         if self.database_type == constant.DB_TYPE_MSSQL_SERVER:
             self.db_session = mssql.MsSqlDb(None)
+            self.db_session.load_session()
     
+    def get_db(self):        
+        return self.db_session
+
     def get_data(self,query):
         if self.db_session is not None:
             return self.db_session.get_data(query)

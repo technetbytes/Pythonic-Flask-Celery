@@ -41,10 +41,13 @@ class DBCore:
     def delete_data(self, delete_query):
         self.get_connection().execute(delete_query)
     
-    def get_session(self):
+    def load_session(self):
         engine = self.get_engine()
         Session = sessionmaker(bind=engine)
         self.current_session = Session()
+        return self.current_session
+
+    def get_session(self):
         return self.current_session
 
     def add_in_session(self,model_type):

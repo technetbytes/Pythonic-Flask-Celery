@@ -23,6 +23,7 @@ class ReceiveJobs(Base):
     inputPublicId = Column(Text, nullable=True)
     outputPublicId = Column(Text, nullable=True)
     fullyQualifiedPublicId = Column(Text, nullable=True)
+    dataResponse = Column(Text, nullable=True)
     uri = Column(Text, nullable=True)
     localPath = Column(Text, nullable=True)
     createdOn = Column(DateTime, nullable=True)
