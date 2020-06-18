@@ -17,6 +17,6 @@ def makefile(jobid,modelid):
 @bp.route('/image-data-async', methods=['POST'])
 def post_image_data():
     req_data = request.get_json()
-    print(req_data["job_id"] + " " + req_data["model_id"])
-    task = process_image.delay(req_data["job_id"],req_data["model_id"])
+    print(req_data["job_id"] + " " + req_data["model_id"] + " " + req_data["project_id"])
+    task = process_image.delay(req_data["job_id"], req_data["model_id"], req_data["project_id"])
     return task.id

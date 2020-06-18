@@ -4,6 +4,9 @@ from celery.utils.log import get_task_logger
 from bridge.bridge_manager import BridgeManager
 from models.modelDetail import AiModelDetail
 from models.receiveJobs import ReceiveJobs
+from models.category import Category
+from models.subcategory import SubCategory
+from utilities.category_Detail import CategoryDetail
 
 from utilities.constant import JOB_STATUS_DONE, JOB_STATUS_ERROR, JOB_STATUS_INSERTED, JOB_STATUS_PENDING, JOB_STATUS_COMMUNICATION_ERROR
 
@@ -13,10 +16,24 @@ import json
 
 logger = get_task_logger(__name__)
 
+
+def build_analytics(category_detail_obj, model_response):
+    response_obj = requests.get("http://knowhow.markematics.net/ReceiveJobs/GetJobDetailById/2")
+    logger.info(response_obj.text)
+    category_response = []    
+    model_response_json = json.loads(response_obj.text)
+    logger.info((model_response_json['data']))
+    for cat_obj in category_detail_obj:
+        tages = cat_obj.tages.split(",")
+        print(tages)
+    pass
+
 @celery.task()
-def process_image(job_id,model_id):
+def process_image(job_id, model_id, project_id):
     model_detail_obj = None
     received_job_obj = None
+
+    category_detail_obj = []
 
     logger.info("process_image_call")
     bridge = BridgeManager().get_Instance().get_Bridge()
@@ -35,6 +52,18 @@ def process_image(job_id,model_id):
         logger.info(f"{job.unProcessedImage} {job.uri}")
         received_job_obj = job
     logger.info(received_job_obj)
+
+    logger.info("category_and_subcategory_loading")
+    category_obj = bridge.get_db().get_session().query(Category).filter(Category.projectId == project_id)
+    for category in category_obj:
+        logger.info(f"{category.categoryName}")        
+        sub_category_obj = bridge.get_db().get_session().query(SubCategory).filter(SubCategory.categoryId == category.id)   
+        for sub_category in sub_category_obj:
+            logger.info(f"{sub_category.name}")
+            category_detail_obj.append(CategoryDetail(category.id, category.categoryName, category.categoryDescription, sub_category.id, sub_category.name, sub_category.tages))
+
+    # temp analytics
+    build_analytics(category_detail_obj,"")
 
     logger.info("checking_pending_job_status")
     if received_job_obj != None:
@@ -59,6 +88,9 @@ def process_image(job_id,model_id):
                 response_obj = requests.post(request_url, data = json.dumps(request_data), headers=headers)
                 logger.info(response_obj.text)
                 if response_obj.status_code == 200:
+                    # build analytic     
+                    #build_analytic(category_detail_obj,response_obj.text)
+
                     # Update received job status into DONE            
                     bridge.get_db().get_session().query(ReceiveJobs).filter_by(id = job_id).update({ReceiveJobs.requestStatus:JOB_STATUS_DONE,ReceiveJobs.dataResponse:response_obj.text})
                     bridge.get_db().get_session().commit()
