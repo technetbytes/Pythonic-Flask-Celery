@@ -1,6 +1,12 @@
+import json
+
 class CategoryResponse:
     '''This is CategoryResponse class'''
     
-    def __init__(self, subcategory_name, count_data):
+    def __init__(self, categoryName, subcategory_name, subcategory_data):
+        self.categoryName = categoryName
         self.subcategory_name = subcategory_name
-        self.count_data = count_data
+        self.subcategory_data = subcategory_data
+
+    def toJson(self):
+        return json.dumps(self, default=lambda o: o.__dict__)
