@@ -12,6 +12,8 @@ class Category(Base):
     id = Column(Integer, primary_key=True, nullable=False)
     categoryName = Column(Text, nullable=False)
     categoryDescription = Column(Text, nullable=True)
+    showType = Column(Text,nullable=True)
+    dataContainer = Column(Text,nullable=True)
     projectId = Column(Integer, nullable=True)
     
         

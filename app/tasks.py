@@ -6,9 +6,16 @@ from models.modelDetail import AiModelDetail
 from models.receiveJobs import ReceiveJobs
 from models.category import Category
 from models.subcategory import SubCategory
+from models.compliance import ShelfCompliance
 from utilities.category_Detail import CategoryDetail
 from utilities.category_Response import CategoryResponse
 from utilities.brand_Response import BrandResponse
+from utilities.complex_encoder import ComplexEncoder
+from utilities.rectangle2 import Rectangle2
+from utilities.point import Point
+from utilities.geometery_operation import is_point_within_dist_of_rect
+from utilities.geometery_operation import rectangle_contain
+from utilities.compliance_meta import ComplianceMetaData
 
 from utilities.constant import JOB_STATUS_DONE, JOB_STATUS_ERROR, JOB_STATUS_INSERTED, JOB_STATUS_PENDING, JOB_STATUS_COMMUNICATION_ERROR
 
@@ -16,98 +23,174 @@ from utilities.common import get_url
 import requests
 import json
 
+
 logger = get_task_logger(__name__)
 
+def build_shelf_compliance(model_response_json, shelf_compliance):    
+    # collection of brand with coordinates
+    # sample data formate
+    # [item_or_brand_name, x, y, h, w]
+    
+    brand_tags_xy_data = model_response_json["MetaData"]        
+    print_debug_detail(f"{brand_tags_xy_data}")
+    compliance_collection = []
+    shelf_coordinate_object = None
+    for each_shelf in shelf_compliance:            
+        compliance_items = each_shelf.complianceItem.split(",")
+        print_debug_info(f"Shelf Name and Tag:- {each_shelf.shelfName, each_shelf.shelfTag}")
+        #get main shelf coordinate detail
+        for single_item_coordinate in brand_tags_xy_data:            
+            if single_item_coordinate[0] == each_shelf.shelfTag:
+                print_debug_info(f"Actual Shelf Name is:- {single_item_coordinate[0]}")
+                shelf_coordinate_object = single_item_coordinate
+                break
+        
+        print_debug_detail(f"Shelf object -> {shelf_coordinate_object}")
+        if shelf_coordinate_object is not None:
 
-def build_analytics(category_detail_obj, model_response):
-    response_obj = requests.get("http://knowhow.markematics.net/ReceiveJobs/GetJobDetailById/2")
-    logger.info(response_obj.text)
+            #creat shelf Rectangle object
+            #logger.info(f"{shelf_coordinate_object[2]}  {float(shelf_coordinate_object[2]+10)}")
 
+            shelf_rectangle = Rectangle2(shelf_coordinate_object[1]-1,float(shelf_coordinate_object[2]-1),shelf_coordinate_object[3],shelf_coordinate_object[4])
+            
+            #logger.info(f"finding shelf rectangle {shelf_rectangle.x,shelf_rectangle.y,shelf_rectangle.w,shelf_rectangle.h}")
+            
+            find_item_inside_shelf = []
+            #using loop searh compliance item in the shelf
+            for each_item_coordinate in brand_tags_xy_data:
+                predicted_item_name = each_item_coordinate[0]
+
+                print_debug_info(f"Inner item Name:- {predicted_item_name}")
+
+                #creat searchable item Rectangle object
+                #find_rectangle = Rectangle(each_item_coordinate[1],each_item_coordinate[2],each_item_coordinate[3],each_item_coordinate[4])                
+                #logger.info(f"item object coordinate -> {find_rectangle.x,find_rectangle.y,find_rectangle.w,find_rectangle.h}")
+
+                item_xy_point = Point(each_item_coordinate[1], each_item_coordinate[2])
+                print_debug_detail(f"Inner item x,y value {each_item_coordinate[1]}, {each_item_coordinate[2]}")
+                
+                #perform search
+                is_rect_inside = is_point_within_dist_of_rect(shelf_rectangle, item_xy_point, dist=1)                
+                print_debug_detail(f"Item found inside:- {is_rect_inside}")
+                if is_rect_inside:
+                    find_item_inside_shelf.append(predicted_item_name)
+            
+            print_debug_info(f"Inside item found length: {len(find_item_inside_shelf)}")
+            if len(find_item_inside_shelf) > 0:
+                #total compliance item formula using intersection of two sets
+                comp_list_as_set = set(compliance_items)
+                intersection = comp_list_as_set.intersection(find_item_inside_shelf)
+                final_intersected_compliance_items = list(intersection)
+
+                print_debug_info(f"compliance items list {final_intersected_compliance_items}")
+                
+                total_compliance_items_count = len(final_intersected_compliance_items)
+                total_shelf_items_count = len(find_item_inside_shelf)
+                total_ratio = total_compliance_items_count / total_shelf_items_count
+                compliance_metadata = ComplianceMetaData(find_item_inside_shelf,
+                final_intersected_compliance_items,
+                each_shelf.shelfName,
+                each_shelf.shelfTag,
+                total_compliance_items_count,
+                total_shelf_items_count,
+                total_ratio,
+                each_shelf.complianceLevel)
+                compliance_collection.append(compliance_metadata)
+            else:
+                logger.info(f"No Compliance item found")
+
+            print_debug_detail(f"loop-end")
+
+        else:
+            logger.info(f"Shelf not found")
+    print_debug_detail(f"main-loop-end")
+    
+    json_string = json.dumps([ob.__dict__ for ob in compliance_collection], cls=ComplexEncoder)
+    print_debug_detail(f"Compliance Json data")
+    print_debug_detail(f"{json_string}")
+    print_debug_info(f"exit from build_shelf_compliance")
+    return json_string
+
+def build_analytics(category_detail_obj, model_response_json): 
     actual_group_data = None
     actual_group_name = []
-    category_response = []    
-    model_response_json = json.loads(response_obj.text) # json.loads(model_response)
-    model_response_json = json.loads(model_response_json['data'])
-    logger.info(type(model_response_json))
+    #build analytics information
+    category_response = []
+    #build topline information
+    topline_response = []
 
-    for key in model_response_json:
-        dic1 = model_response_json[key][0]
-        data_response_json = json.loads(dic1['dataresponse'])
-        group_data = data_response_json['GroupData']
-        print(len(group_data))
-        for v in group_data:            
-            actual_group_data = json.loads(v)            
-            #print(actual_group_data)
-            for each_key in actual_group_data:
-                #print((each_key['BRAND']))
-                actual_group_name.append(each_key['BRAND'])
-        #print(type(ungroup_data)) 
+    group_data = model_response_json['GroupData']    
+    print_debug_info(f"length of group_data is {len(group_data)}")
+    for v in group_data:            
+        actual_group_data = json.loads(v)            
+        for each_key in actual_group_data:
+            actual_group_name.append(each_key['BRAND'])
     
-    # print(" ======== ")
-    # print(actual_group_name)
-    # print(" ======== ")
-    print(actual_group_data)
-    for cat_obj in category_detail_obj:        
-        print(cat_obj.category_name + " " +cat_obj.subcategory_name)
+    for cat_obj in category_detail_obj:
         tages = cat_obj.tages.split(",")
-        # print("*******")
-        # print((tages))
-        # print("*******")
-
-        print("+++++++++++++")               
         not_found_brand = list(set(tages)-set(actual_group_name))
         found_brand = list(set(tages)-set(not_found_brand)) 
-        print(found_brand)
-        print(not_found_brand)
-        print("+++++++++++++")
-
        
         temp_tags_counter = []
         for fb in found_brand:
-            #print(fb)
             ag_data_item = next(item for item in actual_group_data if item["BRAND"] == fb)
-            #print(ag_data_item['BRAND'])
             temp_tags_counter.append(BrandResponse(ag_data_item['BRAND'], ag_data_item['COUNT']))
-            #for ag_data in actual_group_data:
-                #print(type(ag_data))                
-                #s = next((x for x in actual_group_data if x['Brand'] == fb),None)
-                #print(ag_data)
         for nfb in not_found_brand:
             temp_tags_counter.append(BrandResponse(nfb,0))
-        print("++=====+=====++")
-        for tag_counter in temp_tags_counter:
-            print(tag_counter.brand_name + " "+ str(tag_counter.count_data))
 
-        category_response.append(CategoryResponse(cat_obj.category_name , cat_obj.subcategory_name, temp_tags_counter))
+        if cat_obj.dataContainer == "Analytics":
+            print_debug_detail(" Is Analytics Type ")
+            category_response.append(CategoryResponse(cat_obj.category_name , cat_obj.subcategory_name, temp_tags_counter, cat_obj.show_type))
+        else:
+            print_debug_detail(" Is TopLine Type ")
+            topline_response.append(CategoryResponse(cat_obj.category_name , cat_obj.subcategory_name, temp_tags_counter, cat_obj.show_type))
 
-        print("++===== Response =====++")
-        for res in category_response:
-            print("------------------------------------")
-            print(json.dumps(res.toJson()))
+    json_string = json.dumps([ob.__dict__ for ob in category_response], cls=ComplexEncoder)
+    topline_json_string = json.dumps([ob.__dict__ for ob in topline_response], cls=ComplexEncoder)
+    
+    print_debug_detail(f"Analytic Json data")
+    print_debug_detail(f"{json_string}")
+    print_debug_detail(f"Topline analytic Json data")
+    print_debug_detail(f"{topline_json_string}")
+    print_debug_info(f"exit from build_analytics")
+    return json_string, topline_json_string
 
-        # temp_tags_counter = []
-        # for each_key in actual_group_data:
-        #     print((each_key['BRAND']))
-        #     if any(each_key['BRAND'] in s for s in tages):
-        #         print("yes found "+each_key['BRAND']+" ===>")
-        #         temp_tags_counter.append(CategoryResponse(each_key['BRAND']+" ===>", each_key['COUNT']))
-        #     else:
-        #         print("Not found")
-        #         #temp_tags_counter.append(CategoryResponse(each_key['BRAND'], 0))            
-                
-        #     # convert into list                
-        #     temp_brand_lst = [each_key['BRAND']]
-        #     not_found_brand = list(set(tages)-set(temp_brand_lst))
-        #     print("Not_Found_Brand -->")
-        #     print(not_found_brand)
-        #         #for nt_brand in not_found_brand:
-        #             #temp_tags_counter.append(CategoryResponse(nt_brand, 0))
+def build_analytics_and_compliance(category_detail_obj, model_response, shelf_compliance):
+    # temp for dev or testing
+    #response_obj = requests.get("http://knowhow.markematics.net/ReceiveJobs/GetJobDetailById/2")
+    #logger.info(response_obj.text)
+    # for dev or testing
+    #model_response_json = json.loads(response_obj.text)  
+    
+    # for live
+    model_response_json = json.loads(model_response)
 
-        # for df in temp_tags_counter:
-        #     print("===>"+df.subcategory_name + " "+ str(df.count_data))
+    print_debug_detail("model_response json loaded")        
+    print_debug_detail(f"{model_response_json}")
 
+    #build analytic json
+    print_debug_info("Calling build analytics")            
+    analytic_json, topline_json_string = build_analytics(category_detail_obj, model_response_json)
+    
+    #build compliance json
+    print_debug_info("Calling build compliance")
+    compliance_json = build_shelf_compliance(model_response_json, shelf_compliance)    
 
-    pass
+    # here rebuild the json object using [GroupData, UngroupData, BrandName, Compliance, Analytics] objects
+    print_debug_info("Compiling Compliance & Analytics Json response")
+    json_response = json.dumps({"GroupData":model_response_json['GroupData'],"UngroupData":model_response_json['UngroupData'],"BrandName":model_response_json['BrandName'],"Compliance":compliance_json,"Analytics":analytic_json,"Topline":topline_json_string})
+    print_debug_detail(json_response)
+    return json_response
+
+def print_debug_info(data):
+    is_debug = True
+    if is_debug:
+        logger.info(data)
+
+def print_debug_detail(data):
+    is_debug = True
+    if is_debug:
+        logger.info(data)
 
 @celery.task()
 def process_image(job_id, model_id, project_id):
@@ -116,42 +199,46 @@ def process_image(job_id, model_id, project_id):
 
     category_detail_obj = []
 
-    logger.info("process_image_call")
+    print_debug_info("process_image_call")
     bridge = BridgeManager().get_Instance().get_Bridge()
     
-    logger.info("getting_model_detail_call")    
+    print_debug_info("getting_model_detail_call")    
     model_details = bridge.get_db().get_session().query(AiModelDetail).filter(AiModelDetail.modelID == model_id)
 
     for model in model_details:
-        logger.info(f"{model.id} {model.port} {model.url} {model.version} {model.modelJson} {model.status} {model.modelID}")
+        print_debug_info(f"{model.id} {model.port} {model.url} {model.version} {model.modelJson} {model.status} {model.modelID}")
         model_detail_obj = model
     logger.info(model_detail_obj)
     
-    logger.info("getting_job_detail")
+    print_debug_info("getting_job_detail")
     received_jobs = bridge.get_db().get_session().query(ReceiveJobs).filter(ReceiveJobs.id == job_id)
     for job in received_jobs:
-        logger.info(f"{job.unProcessedImage} {job.uri}")
+        print_debug_info(f"{job.unProcessedImage} {job.uri}")
         received_job_obj = job
     logger.info(received_job_obj)
 
-    logger.info("category_and_subcategory_loading")
+    print_debug_info("category_and_subcategory_loading")
     category_obj = bridge.get_db().get_session().query(Category).filter(Category.projectId == project_id)
+
+    print_debug_info("shelf_compliance_loading")
+    shelf_compliance_obj = bridge.get_db().get_session().query(ShelfCompliance).filter(ShelfCompliance.projectId == project_id)
+
     for category in category_obj:
-        logger.info(f"{category.categoryName}")        
+        print_debug_info(f"{category.categoryName}")        
         sub_category_obj = bridge.get_db().get_session().query(SubCategory).filter(SubCategory.categoryId == category.id)   
         for sub_category in sub_category_obj:
-            logger.info(f"{sub_category.name}")
-            category_detail_obj.append(CategoryDetail(category.id, category.categoryName, category.categoryDescription, sub_category.id, sub_category.name, sub_category.tages))
+            print_debug_info(f"{sub_category.name}")
+            category_detail_obj.append(CategoryDetail(category.id, category.categoryName, category.dataContainer, category.categoryDescription, category.showType, sub_category.id, sub_category.name, sub_category.tages))
 
-    # temp analytics
-    build_analytics(category_detail_obj,"")
+    # temp dev or testing analytics
+    #build_analytics_and_compliance(category_detail_obj,"",shelf_compliance_obj)
 
-    logger.info("checking_pending_job_status")
+    print_debug_info("checking_pending_job_status")
     if received_job_obj != None:
         # Checking received job status
-        if received_job_obj.requestStatus.lower() == JOB_STATUS_INSERTED:
-            logger.info(received_job_obj.requestStatus)
-            logger.info(f"Updating status value from Inserted to Pending against {job_id}")
+        if received_job_obj.requestStatus.lower() == JOB_STATUS_INSERTED:#len(received_job_obj.requestStatus.lower()) > 0:
+            print_debug_info(received_job_obj.requestStatus)
+            print_debug_info(f"Updating status value from Inserted to Pending against {job_id}")
 
             # Update received job status into PENDING            
             bridge.get_db().get_session().query(ReceiveJobs).filter_by(id = job_id).update({ReceiveJobs.requestStatus:JOB_STATUS_PENDING})
@@ -160,20 +247,22 @@ def process_image(job_id, model_id, project_id):
             # Generating image processing request url
             request_url = get_url(model_detail_obj.url, model_detail_obj.port, "upload-image")
 
-            logger.info(f"Generating image processing request url {request_url}")
+            print_debug_info(f"Generating image processing request url {request_url}")
             try:
                 # Sending image to model for analysis
                 headers = {'Content-type': 'application/json'}
                 request_data = {'data_url':received_job_obj.uri,'job_id':job_id}
-                logger.info(f"Request data inside {request_data}") 
+                print_debug_info(f"Request data inside {request_data}") 
                 response_obj = requests.post(request_url, data = json.dumps(request_data), headers=headers)
-                logger.info(response_obj.text)
+                print_debug_info(response_obj.text)
                 if response_obj.status_code == 200:
-                    # build analytic     
-                    #build_analytic(category_detail_obj,response_obj.text)
 
+                    # build live analytic     
+                    print_debug_info("> Sending Request for Complianc & Analysis Building")                    
+                    analytic_data = build_analytics_and_compliance(category_detail_obj, response_obj.text, shelf_compliance_obj)                        
+                    
                     # Update received job status into DONE            
-                    bridge.get_db().get_session().query(ReceiveJobs).filter_by(id = job_id).update({ReceiveJobs.requestStatus:JOB_STATUS_DONE,ReceiveJobs.dataResponse:response_obj.text})
+                    bridge.get_db().get_session().query(ReceiveJobs).filter_by(id = job_id).update({ReceiveJobs.requestStatus:JOB_STATUS_DONE,ReceiveJobs.dataResponse:analytic_data})
                     bridge.get_db().get_session().commit()
                 elif response_obj.status_code == 400 or response_obj.status_code == 500:
                     # Update received job status into ERROR            
@@ -184,5 +273,5 @@ def process_image(job_id, model_id, project_id):
                 bridge.get_db().get_session().query(ReceiveJobs).filter_by(id = job_id).update({ReceiveJobs.requestStatus:JOB_STATUS_COMMUNICATION_ERROR,ReceiveJobs.dataResponse:"Communication Error"})
                 bridge.get_db().get_session().commit()                
         else:
-            logger.info(f"Job does not proceed {received_job_obj.requestStatus}")
-    logger.info("updating_pending_job_status")
+            print_debug_info(f"Job does not proceed {received_job_obj.requestStatus}")
+    print_debug_info("updating_pending_job_status")
